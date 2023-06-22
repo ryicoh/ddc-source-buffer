@@ -11,23 +11,19 @@ import {
 import { basename } from "https://deno.land/std@0.187.0/path/mod.ts";
 
 export async function getFileSize(fname: string): Promise<number> {
-  let file: Deno.FileInfo;
   try {
-    file = await Deno.stat(fname);
-  } catch (e) {
-    if (e instanceof Deno.errors.NotFound) {
-      return -1;
-    }
+    const file = await Deno.stat(fname);
+    return file.size;
+  } catch {
     return -1;
   }
-  return file.size;
 }
 
 export function allWords(lines: string[], pattern: string): string[] {
   const words = lines
     .flatMap((line) => [...line.matchAll(new RegExp(pattern, "gu"))])
     .map((match) => match[0])
-    .filter((word) => word.length > 0);
+    .filter((word) => word !== "");
   return Array.from(new Set(words)); // remove duplication
 }
 
@@ -201,7 +197,7 @@ export class Source extends BaseSource<Params> {
         }));
       }
       return buf.candidates;
-    }).flatMap((candidate) => candidate);
+    }).flat();
   }
 
   params(): Params {
