@@ -1,52 +1,37 @@
 import {
   BaseSource,
+  Context,
   DdcEvent,
   Item,
-} from "https://deno.land/x/ddc_vim@v3.4.0/types.ts";
-import { Denops, fn, vars } from "https://deno.land/x/ddc_vim@v3.4.0/deps.ts";
+} from "https://deno.land/x/ddc_vim@v3.6.0/types.ts";
 import {
-  GatherArguments,
+  Denops,
+  fn,
+  op,
+  vars,
+} from "https://deno.land/x/ddc_vim@v3.6.0/deps.ts";
+import {
   OnEventArguments,
 } from "https://deno.land/x/ddc_vim@v3.4.0/base/source.ts";
 import { basename } from "https://deno.land/std@0.187.0/path/mod.ts";
 
-export async function getFileSize(fname: string): Promise<number> {
-  try {
-    const file = await Deno.stat(fname);
-    return file.size;
-  } catch {
-    return -1;
-  }
-}
-
-export function allWords(lines: string[], pattern: string): string[] {
-  const words = lines
-    .flatMap((line) => [...line.matchAll(new RegExp(pattern, "gu"))])
-    .map((match) => match[0])
-    .filter((word) => word !== "");
-  return Array.from(new Set(words)); // remove duplication
-}
-
-type Params = {
-  requireSameFiletype: boolean;
-  limitBytes: number;
-  fromAltBuf: boolean;
-  forceCollect: boolean;
-  showBufName: boolean;
-  bufNameStyle: "none" | "full" | "basename";
-};
-
-type bufCache = {
+type BufCache = {
   bufnr: number;
   filetype: string;
   candidates: Item[];
   bufname: string;
-  changed: number;
+  changedtick: number;
+};
+
+type Params = {
+  getBufnrs?: number;
+  limitBytes: number;
+  bufNameStyle: "none" | "full" | "basename";
 };
 
 export class Source extends BaseSource<Params> {
-  private buffers: { [bufnr: string]: bufCache } = {};
-  events = [
+  private buffers: Record<number, BufCache> = {};
+  override events = [
     "BufWinEnter",
     "BufWritePost",
     "InsertEnter",
@@ -54,59 +39,23 @@ export class Source extends BaseSource<Params> {
     "BufEnter",
   ] as DdcEvent[];
 
-  private async gatherWords(
+  private async makeBufCache(
     denops: Denops,
     bufnr: number,
     pattern: string,
-  ): Promise<Item[]> {
-    return allWords(await fn.getbufline(denops, bufnr, 1, "$"), pattern)
-      .map((word) => ({ word }));
-  }
-
-  private async makeCurrentBufCache(
-    denops: Denops,
-    filetype: string,
-    pattern: string,
     limit: number,
   ): Promise<void> {
-    const endLine = await fn.line(denops, "$");
-    const size = (await fn.line2byte(
-      denops,
-      endLine + 1,
-    )) - 1;
-    if (size > limit) {
+    const info = await getBufInfo(denops, bufnr, limit);
+    if (!info) {
       return;
     }
-    const bufnr = await fn.bufnr(denops);
 
-    this.buffers[bufnr.toString()] = {
-      bufnr: bufnr,
-      filetype: filetype,
-      candidates: await this.gatherWords(denops, bufnr, pattern),
-      bufname: await fn.bufname(denops, bufnr),
-      changed: await vars.b.get(denops, "changedtick", 0),
-    };
-  }
-
-  private async makeFileBufCache(
-    denops: Denops,
-    bufnr: number,
-    pattern: string,
-    limit: number,
-    force: boolean,
-  ): Promise<void> {
-    const bufname = await fn.bufname(denops, bufnr);
-    if (!force) {
-      const size = await getFileSize(bufname);
-      if (size < 0 || size > limit) return;
-    }
-
-    this.buffers[bufnr.toString()] = {
-      bufnr: bufnr,
-      filetype: await fn.getbufvar(denops, bufnr, "&filetype") as string,
-      candidates: await this.gatherWords(denops, bufnr, pattern),
-      bufname: bufname,
-      changed: await vars.b.get(denops, "changedtick", 0),
+    this.buffers[info.bufnr] = {
+      bufnr: info.bufnr,
+      filetype: await op.filetype.getBuffer(denops, info.bufnr),
+      candidates: await gatherWords(denops, info.bufnr, pattern),
+      bufname: info.name,
+      changedtick: info.changedtick,
     };
   }
 
@@ -114,31 +63,30 @@ export class Source extends BaseSource<Params> {
     denops: Denops,
     pattern: string,
     limit: number,
-    force: boolean,
+    context: Context,
+    id?: number,
   ): Promise<void> {
-    const tabBufnrs = (await fn.tabpagebuflist(denops) as number[]);
+    const bufnrs = await getBufnrs(denops, context, id);
 
-    for (const bufnr of tabBufnrs) {
+    await Promise.all(bufnrs.map(async (bufnr) => {
       if (
         !(bufnr in this.buffers) ||
-        (await fn.getbufvar(denops, "changedtick", 0)) !=
-          this.buffers[bufnr].changed
+        await vars.b.get(denops, "changedtick", 0) !==
+          this.buffers[bufnr].changedtick
       ) {
-        await this.makeFileBufCache(denops, bufnr, pattern, limit, force);
+        await this.makeBufCache(denops, bufnr, pattern, limit);
       }
-    }
+    }));
 
-    for (const bufnr of Object.keys(this.buffers)) {
-      if (
-        !(tabBufnrs.includes(Number(bufnr))) &&
-        !(await fn.buflisted(denops, Number(bufnr)))
-      ) {
+    for (const _bufnr of Object.keys(this.buffers)) {
+      const bufnr = Number(_bufnr);
+      if (!await fn.bufloaded(denops, bufnr)) {
         delete this.buffers[bufnr];
       }
     }
   }
 
-  async onEvent({
+  override async onEvent({
     denops,
     context,
     options,
@@ -151,63 +99,99 @@ export class Source extends BaseSource<Params> {
       return;
     }
 
-    await this.makeCurrentBufCache(
+    await this.makeBufCache(
       denops,
-      context.filetype,
+      0,
       options.keywordPattern,
-      sourceParams.limitBytes as number,
+      sourceParams.limitBytes,
     );
 
     await this.checkCache(
       denops,
       options.keywordPattern,
       sourceParams.limitBytes,
-      sourceParams.forceCollect,
+      context,
+      sourceParams.getBufnrs,
     );
   }
 
-  async gather({
-    denops,
-    context,
-    sourceParams,
-  }: GatherArguments<Params>): Promise<Item[]> {
-    const p = sourceParams as unknown as Params;
-    if (p.showBufName) {
-      // for compatibility
-      p.bufNameStyle = "full";
-    }
-    const tabBufnrs = (await fn.tabpagebuflist(denops) as number[]);
-    const altbuf = await fn.bufnr(denops, "#");
+  override async gather(args: {
+    denops: Denops;
+    context: Context;
+    sourceParams: Params;
+  }): Promise<Item[]> {
+    const param = args.sourceParams as Params;
+    const bufnrs = await getBufnrs(
+      args.denops,
+      args.context,
+      param.getBufnrs,
+    );
 
-    return Object.values(this.buffers).filter((buffer) =>
-      !p.requireSameFiletype ||
-      (buffer.filetype == context.filetype) ||
-      tabBufnrs.includes(buffer.bufnr) ||
-      (p.fromAltBuf && (altbuf == buffer.bufnr))
-    ).map((buf) => {
-      const menu = (p.bufNameStyle == "full")
-        ? buf.bufname
-        : (p.bufNameStyle == "basename")
-        ? basename(buf.bufname)
-        : "";
-      if (menu) {
-        return buf.candidates.map((b) => ({
-          word: b.word,
-          menu: menu,
-        }));
-      }
-      return buf.candidates;
-    }).flat();
+    return Object.values(this.buffers)
+      .filter((cache) => bufnrs.includes(cache.bufnr))
+      .flatMap((cache): Item[] =>
+        cache.candidates.map((item) => ({
+          ...item,
+          menu: param.bufNameStyle === "full"
+            ? cache.bufname
+            : param.bufNameStyle === "basename"
+            ? basename(cache.bufname)
+            : undefined,
+        }))
+      );
   }
 
-  params(): Params {
+  override params(): Params {
     return {
-      requireSameFiletype: true,
       limitBytes: 1e6,
-      fromAltBuf: false,
-      forceCollect: false,
-      showBufName: false,
       bufNameStyle: "none",
     };
   }
+}
+
+async function getBufInfo(
+  denops: Denops,
+  bufnr: number,
+  limit: number,
+) {
+  const bufInfos = await fn.getbufinfo(denops, bufnr);
+  if (bufInfos.length !== 1) {
+    return;
+  }
+  const info = bufInfos[0];
+  const size = (await fn.line2byte(denops, info.linecount + 1)) - 1;
+  if (size <= limit) {
+    return info;
+  }
+}
+
+async function gatherWords(
+  denops: Denops,
+  bufnr: number,
+  pattern: string,
+): Promise<Item[]> {
+  const regexp = new RegExp(pattern, "gu");
+  const words = (await fn.getbufline(denops, bufnr, 1, "$"))
+    .flatMap((line) => [...line.matchAll(regexp)])
+    .map((match) => match[0])
+    .filter((word) => word !== "");
+  return deduplicate(words).map((word) => ({ word }));
+}
+
+async function getBufnrs(
+  denops: Denops,
+  context: Context,
+  id?: number,
+): Promise<number[]> {
+  if (id !== undefined) {
+    return await denops.call("denops#callback#call", id, context) as number[];
+  } else {
+    return (await fn.getbufinfo(denops))
+      .filter((info) => info.listed && info.loaded)
+      .map((info) => info.bufnr);
+  }
+}
+
+function deduplicate<T>(array: T[]): T[] {
+  return Array.from(new Set(array));
 }
