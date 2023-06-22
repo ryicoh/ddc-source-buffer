@@ -184,7 +184,9 @@ async function getBufnrs(
   id?: number,
 ): Promise<number[]> {
   if (id !== undefined) {
-    return await denops.call("denops#callback#call", id, context) as number[];
+    const currentBufnr = await fn.bufnr(denops);
+    return (await denops.call("denops#callback#call", id, context) as number[])
+      .map((bufnr) => bufnr !== 0 ? bufnr : currentBufnr);
   } else {
     return (await fn.getbufinfo(denops))
       .filter((info) => info.listed && info.loaded)
