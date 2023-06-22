@@ -154,15 +154,21 @@ async function getBufInfo(
   bufnr: number,
   limit: number,
 ) {
+  await fn.bufload(denops, bufnr);
   const bufInfos = await fn.getbufinfo(denops, bufnr);
   if (bufInfos.length !== 1) {
     return;
   }
   const info = bufInfos[0];
-  const size = (await fn.line2byte(denops, info.linecount + 1)) - 1;
-  if (size <= limit) {
-    return info;
+  try {
+    const stat = await Deno.stat(info.name);
+    if (stat.size > limit) {
+      return;
+    }
+  } catch {
+    // File does not exist, but buffer does.
   }
+  return info;
 }
 
 async function gatherWords(
