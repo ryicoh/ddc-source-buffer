@@ -101,7 +101,7 @@ export class Source extends BaseSource<Params> {
 
     await this.makeBufCache(
       denops,
-      0,
+      await fn.bufnr(denops),
       options.keywordPattern,
       sourceParams.limitBytes,
     );
