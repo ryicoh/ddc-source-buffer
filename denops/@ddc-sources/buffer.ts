@@ -15,6 +15,7 @@ import {
   OnEventArguments,
 } from "https://deno.land/x/ddc_vim@v3.4.0/base/source.ts";
 import { basename } from "https://deno.land/std@0.187.0/path/mod.ts";
+import { assert, is } from "https://deno.land/x/unknownutil@v3.2.0/mod.ts";
 
 type BufCache = {
   bufnr: number;
@@ -188,8 +189,9 @@ async function getBufnrs(
 ): Promise<number[]> {
   if (id !== undefined) {
     const currentBufnr = await fn.bufnr(denops);
-    return (await denops.call("denops#callback#call", id, context) as number[])
-      .map((bufnr) => bufnr !== 0 ? bufnr : currentBufnr);
+    const bufnrs = await denops.call("denops#callback#call", id, context);
+    assert(bufnrs, is.ArrayOf(is.Number));
+    return bufnrs.map((bufnr) => bufnr !== 0 ? bufnr : currentBufnr);
   } else {
     return (await fn.getbufinfo(denops))
       .filter((info) => info.listed && info.loaded)
