@@ -127,16 +127,14 @@ export class Source extends BaseSource<Params> {
 
     return [...this.buffers.values()]
       .filter((cache) => bufnrs.includes(cache.bufnr))
-      .flatMap((cache): Item[] =>
-        cache.candidates.map((item) => ({
-          ...item,
-          menu: sourceParams.bufNameStyle === "full"
-            ? cache.bufname
-            : sourceParams.bufNameStyle === "basename"
-            ? basename(cache.bufname)
-            : undefined,
-        }))
-      );
+      .flatMap((cache): Item[] => {
+        const menu = sourceParams.bufNameStyle === "full"
+          ? cache.bufname
+          : sourceParams.bufNameStyle === "basename"
+          ? basename(cache.bufname)
+          : undefined;
+        return cache.candidates.map((item) => ({ ...item, menu }));
+      });
   }
 
   override params(): Params {
