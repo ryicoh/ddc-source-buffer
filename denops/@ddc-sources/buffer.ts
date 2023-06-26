@@ -11,6 +11,7 @@ import {
   vars,
 } from "https://deno.land/x/ddc_vim@v3.6.0/deps.ts";
 import {
+  GatherArguments,
   OnEventArguments,
 } from "https://deno.land/x/ddc_vim@v3.4.0/base/source.ts";
 import { basename } from "https://deno.land/std@0.187.0/path/mod.ts";
@@ -31,13 +32,13 @@ type Params = {
 
 export class Source extends BaseSource<Params> {
   private buffers: Record<number, BufCache> = {};
-  override events = [
+  override events: DdcEvent[] = [
     "BufWinEnter",
     "BufWritePost",
     "InsertEnter",
     "InsertLeave",
     "BufEnter",
-  ] as DdcEvent[];
+  ];
 
   private async makeBufCache(
     denops: Denops,
@@ -115,16 +116,15 @@ export class Source extends BaseSource<Params> {
     );
   }
 
-  override async gather(args: {
-    denops: Denops;
-    context: Context;
-    sourceParams: Params;
-  }): Promise<Item[]> {
-    const param = args.sourceParams as Params;
+  override async gather({
+    denops,
+    context,
+    sourceParams,
+  }: GatherArguments<Params>): Promise<Item[]> {
     const bufnrs = await getBufnrs(
-      args.denops,
-      args.context,
-      param.getBufnrs,
+      denops,
+      context,
+      sourceParams.getBufnrs,
     );
 
     return Object.values(this.buffers)
@@ -132,9 +132,9 @@ export class Source extends BaseSource<Params> {
       .flatMap((cache): Item[] =>
         cache.candidates.map((item) => ({
           ...item,
-          menu: param.bufNameStyle === "full"
+          menu: sourceParams.bufNameStyle === "full"
             ? cache.bufname
-            : param.bufNameStyle === "basename"
+            : sourceParams.bufNameStyle === "basename"
             ? basename(cache.bufname)
             : undefined,
         }))
