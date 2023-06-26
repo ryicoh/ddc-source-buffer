@@ -31,7 +31,7 @@ type Params = {
 };
 
 export class Source extends BaseSource<Params> {
-  private buffers: Record<number, BufCache> = {};
+  private buffers: Map<number, BufCache> = new Map();
   override events: DdcEvent[] = [
     "BufWinEnter",
     "BufWritePost",
@@ -51,13 +51,13 @@ export class Source extends BaseSource<Params> {
       return;
     }
 
-    this.buffers[info.bufnr] = {
+    this.buffers.set(info.bufnr, {
       bufnr: info.bufnr,
       filetype: await op.filetype.getBuffer(denops, info.bufnr),
       candidates: await gatherWords(denops, info.bufnr, pattern),
       bufname: info.name,
       changedtick: info.changedtick,
-    };
+    });
   }
 
   private async checkCache(
@@ -70,21 +70,20 @@ export class Source extends BaseSource<Params> {
     const bufnrs = await getBufnrs(denops, context, id);
 
     await Promise.all(bufnrs.map(async (bufnr) => {
+      const changedtick = this.buffers.get(bufnr)?.changedtick;
       if (
-        !(bufnr in this.buffers) ||
-        await vars.b.get(denops, "changedtick", 0) !==
-          this.buffers[bufnr].changedtick
+        changedtick === undefined ||
+        await vars.b.get(denops, "changedtick", 0) !== changedtick
       ) {
         await this.makeBufCache(denops, bufnr, pattern, limit);
       }
     }));
 
-    for (const _bufnr of Object.keys(this.buffers)) {
-      const bufnr = Number(_bufnr);
+    await Promise.all([...this.buffers.keys()].map(async (bufnr) => {
       if (!await fn.bufloaded(denops, bufnr)) {
-        delete this.buffers[bufnr];
+        this.buffers.delete(bufnr);
       }
-    }
+    }));
   }
 
   override async onEvent({
@@ -93,16 +92,14 @@ export class Source extends BaseSource<Params> {
     options,
     sourceParams,
   }: OnEventArguments<Params>): Promise<void> {
-    if (
-      context.event == "BufEnter" &&
-      (await fn.bufnr(denops) in this.buffers)
-    ) {
+    const currentBufnr = await fn.bufnr(denops);
+    if (context.event == "BufEnter" && this.buffers.has(currentBufnr)) {
       return;
     }
 
     await this.makeBufCache(
       denops,
-      await fn.bufnr(denops),
+      currentBufnr,
       options.keywordPattern,
       sourceParams.limitBytes,
     );
@@ -127,7 +124,7 @@ export class Source extends BaseSource<Params> {
       sourceParams.getBufnrs,
     );
 
-    return Object.values(this.buffers)
+    return [...this.buffers.values()]
       .filter((cache) => bufnrs.includes(cache.bufnr))
       .flatMap((cache): Item[] =>
         cache.candidates.map((item) => ({
