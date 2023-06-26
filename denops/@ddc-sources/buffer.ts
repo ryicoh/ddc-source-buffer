@@ -32,6 +32,16 @@ type Params = {
   bufNameStyle: "none" | "full" | "basename";
 };
 
+type BufInfo = Pick<fn.BufInfo, typeof bufInfoFields[number]>;
+
+const bufInfoFields = [
+  "bufnr",
+  "name",
+  "changedtick",
+  "listed",
+  "loaded",
+] as const satisfies ReadonlyArray<keyof fn.BufInfo>;
+
 export class Source extends BaseSource<Params> {
   private buffers: Map<number, BufCache> = new Map();
   override events: DdcEvent[] = [
@@ -153,9 +163,9 @@ async function getBufInfo(
   denops: Denops,
   bufnr: number,
   limit: number,
-) {
+): Promise<BufInfo | undefined> {
   await fn.bufload(denops, bufnr);
-  const bufInfos = await fn.getbufinfo(denops, bufnr);
+  const bufInfos = await safeGetBufInfo(denops, bufnr);
   if (bufInfos.length !== 1) {
     return;
   }
@@ -195,12 +205,23 @@ async function getBufnrs(
     assert(bufnrs, is.ArrayOf(is.Number));
     return bufnrs.map((bufnr) => bufnr !== 0 ? bufnr : currentBufnr);
   } else {
-    return (await fn.getbufinfo(denops))
-      .filter((info) => info.listed && info.loaded)
+    return (await safeGetBufInfo(denops, { buflisted: true, bufloaded: true }))
       .map((info) => info.bufnr);
   }
 }
 
 function deduplicate<T>(array: T[]): T[] {
   return Array.from(new Set(array));
+}
+
+const bufInfoMapExpr = `{_, info -> #{${
+  bufInfoFields.map((field) => `${field}: info.${field}`).join(",")
+}}}`;
+
+function safeGetBufInfo(
+  denops: Denops,
+  buf: fn.BufNameArg | fn.GetBufInfoDictArg,
+): Promise<BufInfo[]> {
+  const expr = `getbufinfo(buf)->map(${bufInfoMapExpr})`;
+  return denops.eval(expr, { buf }) as Promise<BufInfo[]>;
 }
