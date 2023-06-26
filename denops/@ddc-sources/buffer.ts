@@ -3,18 +3,19 @@ import {
   Context,
   DdcEvent,
   Item,
-} from "https://deno.land/x/ddc_vim@v3.6.0/types.ts";
+} from "https://deno.land/x/ddc_vim@v3.7.0/types.ts";
 import {
   Denops,
   fn,
   op,
   vars,
-} from "https://deno.land/x/ddc_vim@v3.6.0/deps.ts";
+} from "https://deno.land/x/ddc_vim@v3.7.0/deps.ts";
 import {
   GatherArguments,
   OnEventArguments,
-} from "https://deno.land/x/ddc_vim@v3.4.0/base/source.ts";
-import { basename } from "https://deno.land/std@0.187.0/path/mod.ts";
+} from "https://deno.land/x/ddc_vim@v3.7.0/base/source.ts";
+import { vimoption2ts } from "https://deno.land/x/ddc_vim@v3.7.0/util.ts";
+import { basename } from "https://deno.land/std@0.192.0/path/mod.ts";
 import { assert, is } from "https://deno.land/x/unknownutil@v3.2.0/mod.ts";
 
 type BufCache = {
@@ -52,10 +53,17 @@ export class Source extends BaseSource<Params> {
       return;
     }
 
+    // Convert keywordPattern
+    const iskeyword = await op.iskeyword.getBuffer(denops, bufnr);
+    const bufPattern = pattern.replaceAll(
+      /\\k/g,
+      () => "[" + vimoption2ts(iskeyword) + "]",
+    );
+
     this.buffers.set(info.bufnr, {
       bufnr: info.bufnr,
       filetype: await op.filetype.getBuffer(denops, info.bufnr),
-      candidates: await gatherWords(denops, info.bufnr, pattern),
+      candidates: await gatherWords(denops, info.bufnr, bufPattern),
       bufname: info.name,
       changedtick: info.changedtick,
     });
@@ -63,13 +71,10 @@ export class Source extends BaseSource<Params> {
 
   private async checkCache(
     denops: Denops,
+    bufnrs: number[],
     pattern: string,
     limit: number,
-    context: Context,
-    id?: number,
   ): Promise<void> {
-    const bufnrs = await getBufnrs(denops, context, id);
-
     await Promise.all(bufnrs.map(async (bufnr) => {
       const changedtick = this.buffers.get(bufnr)?.changedtick;
       if (
@@ -90,7 +95,7 @@ export class Source extends BaseSource<Params> {
   override async onEvent({
     denops,
     context,
-    options,
+    sourceOptions,
     sourceParams,
   }: OnEventArguments<Params>): Promise<void> {
     const currentBufnr = await fn.bufnr(denops);
@@ -98,19 +103,18 @@ export class Source extends BaseSource<Params> {
       return;
     }
 
-    await this.makeBufCache(
-      denops,
+    // Always update current buffer
+    this.buffers.delete(currentBufnr);
+    const bufnrs = deduplicate([
       currentBufnr,
-      options.keywordPattern,
-      sourceParams.limitBytes,
-    );
+      ...await getBufnrs(denops, context, sourceParams.getBufnrs),
+    ]);
 
     await this.checkCache(
       denops,
-      options.keywordPattern,
+      bufnrs,
+      sourceOptions.keywordPattern,
       sourceParams.limitBytes,
-      context,
-      sourceParams.getBufnrs,
     );
   }
 
