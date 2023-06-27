@@ -3,18 +3,18 @@ import {
   Context,
   DdcEvent,
   Item,
-} from "https://deno.land/x/ddc_vim@v3.7.0/types.ts";
+} from "https://deno.land/x/ddc_vim@v3.7.2/types.ts";
 import {
   Denops,
   fn,
   op,
   vars,
-} from "https://deno.land/x/ddc_vim@v3.7.0/deps.ts";
+} from "https://deno.land/x/ddc_vim@v3.7.2/deps.ts";
 import {
   GatherArguments,
   OnEventArguments,
-} from "https://deno.land/x/ddc_vim@v3.7.0/base/source.ts";
-import { vimoption2ts } from "https://deno.land/x/ddc_vim@v3.7.0/util.ts";
+} from "https://deno.land/x/ddc_vim@v3.7.2/base/source.ts";
+import { convertKeywordPattern } from "https://deno.land/x/ddc_vim@v3.7.2/util.ts";
 import { basename } from "https://deno.land/std@0.192.0/path/mod.ts";
 import { assert, is } from "https://deno.land/x/unknownutil@v3.2.0/mod.ts";
 
@@ -63,12 +63,7 @@ export class Source extends BaseSource<Params> {
       return;
     }
 
-    // Convert keywordPattern
-    const iskeyword = await op.iskeyword.getBuffer(denops, bufnr);
-    const bufPattern = pattern.replaceAll(
-      /\\k/g,
-      () => "[" + vimoption2ts(iskeyword) + "]",
-    );
+    const bufPattern = await convertKeywordPattern(denops, pattern, bufnr);
 
     this.buffers.set(info.bufnr, {
       bufnr: info.bufnr,
