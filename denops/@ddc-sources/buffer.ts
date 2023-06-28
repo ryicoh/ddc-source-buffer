@@ -3,17 +3,20 @@ import {
   Context,
   DdcEvent,
   Item,
-} from "https://deno.land/x/ddc_vim@v3.6.0/types.ts";
+} from "https://deno.land/x/ddc_vim@v3.7.2/types.ts";
 import {
   Denops,
   fn,
   op,
   vars,
-} from "https://deno.land/x/ddc_vim@v3.6.0/deps.ts";
+} from "https://deno.land/x/ddc_vim@v3.7.2/deps.ts";
 import {
+  GatherArguments,
   OnEventArguments,
-} from "https://deno.land/x/ddc_vim@v3.4.0/base/source.ts";
-import { basename } from "https://deno.land/std@0.187.0/path/mod.ts";
+} from "https://deno.land/x/ddc_vim@v3.7.2/base/source.ts";
+import { convertKeywordPattern } from "https://deno.land/x/ddc_vim@v3.7.2/util.ts";
+import { basename } from "https://deno.land/std@0.192.0/path/mod.ts";
+import { assert, is } from "https://deno.land/x/unknownutil@v3.2.0/mod.ts";
 
 type BufCache = {
   bufnr: number;
@@ -29,15 +32,25 @@ type Params = {
   bufNameStyle: "none" | "full" | "basename";
 };
 
+type BufInfo = Pick<fn.BufInfo, typeof bufInfoFields[number]>;
+
+const bufInfoFields = [
+  "bufnr",
+  "name",
+  "changedtick",
+  "listed",
+  "loaded",
+] as const satisfies ReadonlyArray<keyof fn.BufInfo>;
+
 export class Source extends BaseSource<Params> {
-  private buffers: Record<number, BufCache> = {};
-  override events = [
+  private buffers: Map<number, BufCache> = new Map();
+  override events: DdcEvent[] = [
     "BufWinEnter",
     "BufWritePost",
     "InsertEnter",
     "InsertLeave",
     "BufEnter",
-  ] as DdcEvent[];
+  ];
 
   private async makeBufCache(
     denops: Denops,
@@ -50,95 +63,87 @@ export class Source extends BaseSource<Params> {
       return;
     }
 
-    this.buffers[info.bufnr] = {
+    const bufPattern = await convertKeywordPattern(denops, pattern, bufnr);
+
+    this.buffers.set(info.bufnr, {
       bufnr: info.bufnr,
       filetype: await op.filetype.getBuffer(denops, info.bufnr),
-      candidates: await gatherWords(denops, info.bufnr, pattern),
+      candidates: await gatherWords(denops, info.bufnr, bufPattern),
       bufname: info.name,
       changedtick: info.changedtick,
-    };
+    });
   }
 
   private async checkCache(
     denops: Denops,
+    bufnrs: number[],
     pattern: string,
     limit: number,
-    context: Context,
-    id?: number,
   ): Promise<void> {
-    const bufnrs = await getBufnrs(denops, context, id);
-
     await Promise.all(bufnrs.map(async (bufnr) => {
+      const changedtick = this.buffers.get(bufnr)?.changedtick;
       if (
-        !(bufnr in this.buffers) ||
-        await vars.b.get(denops, "changedtick", 0) !==
-          this.buffers[bufnr].changedtick
+        changedtick === undefined ||
+        await vars.b.get(denops, "changedtick", 0) !== changedtick
       ) {
         await this.makeBufCache(denops, bufnr, pattern, limit);
       }
     }));
 
-    for (const _bufnr of Object.keys(this.buffers)) {
-      const bufnr = Number(_bufnr);
+    await Promise.all([...this.buffers.keys()].map(async (bufnr) => {
       if (!await fn.bufloaded(denops, bufnr)) {
-        delete this.buffers[bufnr];
+        this.buffers.delete(bufnr);
       }
-    }
+    }));
   }
 
   override async onEvent({
     denops,
     context,
-    options,
+    sourceOptions,
     sourceParams,
   }: OnEventArguments<Params>): Promise<void> {
-    if (
-      context.event == "BufEnter" &&
-      (await fn.bufnr(denops) in this.buffers)
-    ) {
+    const currentBufnr = await fn.bufnr(denops);
+    if (context.event == "BufEnter" && this.buffers.has(currentBufnr)) {
       return;
     }
 
-    await this.makeBufCache(
-      denops,
-      await fn.bufnr(denops),
-      options.keywordPattern,
-      sourceParams.limitBytes,
-    );
+    // Always update current buffer
+    this.buffers.delete(currentBufnr);
+    const bufnrs = deduplicate([
+      currentBufnr,
+      ...await getBufnrs(denops, context, sourceParams.getBufnrs),
+    ]);
 
     await this.checkCache(
       denops,
-      options.keywordPattern,
+      bufnrs,
+      sourceOptions.keywordPattern,
       sourceParams.limitBytes,
-      context,
-      sourceParams.getBufnrs,
     );
   }
 
-  override async gather(args: {
-    denops: Denops;
-    context: Context;
-    sourceParams: Params;
-  }): Promise<Item[]> {
-    const param = args.sourceParams as Params;
+  override async gather({
+    denops,
+    context,
+    sourceParams,
+  }: GatherArguments<Params>): Promise<Item[]> {
     const bufnrs = await getBufnrs(
-      args.denops,
-      args.context,
-      param.getBufnrs,
+      denops,
+      context,
+      sourceParams.getBufnrs,
     );
 
-    return Object.values(this.buffers)
+    return [...this.buffers.values()]
       .filter((cache) => bufnrs.includes(cache.bufnr))
-      .flatMap((cache): Item[] =>
-        cache.candidates.map((item) => ({
-          ...item,
-          menu: param.bufNameStyle === "full"
-            ? cache.bufname
-            : param.bufNameStyle === "basename"
-            ? basename(cache.bufname)
-            : undefined,
-        }))
-      );
+      .flatMap((cache): Item[] => {
+        const menu = sourceParams.bufNameStyle === "full"
+          ? cache.bufname
+          : sourceParams.bufNameStyle === "basename"
+          ? basename(cache.bufname)
+          : undefined;
+        return cache.candidates.map((item) => ({ ...item, menu }));
+      });
   }
 
   override params(): Params {
@@ -153,9 +158,9 @@ async function getBufInfo(
   denops: Denops,
   bufnr: number,
   limit: number,
-) {
+): Promise<BufInfo | undefined> {
   await fn.bufload(denops, bufnr);
-  const bufInfos = await fn.getbufinfo(denops, bufnr);
+  const bufInfos = await safeGetBufInfo(denops, bufnr);
   if (bufInfos.length !== 1) {
     return;
   }
@@ -191,15 +196,27 @@ async function getBufnrs(
 ): Promise<number[]> {
   if (id !== undefined) {
     const currentBufnr = await fn.bufnr(denops);
-    return (await denops.call("denops#callback#call", id, context) as number[])
-      .map((bufnr) => bufnr !== 0 ? bufnr : currentBufnr);
+    const bufnrs = await denops.call("denops#callback#call", id, context);
+    assert(bufnrs, is.ArrayOf(is.Number));
+    return bufnrs.map((bufnr) => bufnr !== 0 ? bufnr : currentBufnr);
   } else {
-    return (await fn.getbufinfo(denops))
-      .filter((info) => info.listed && info.loaded)
+    return (await safeGetBufInfo(denops, { buflisted: true, bufloaded: true }))
       .map((info) => info.bufnr);
   }
 }
 
 function deduplicate<T>(array: T[]): T[] {
   return Array.from(new Set(array));
+}
+
+const bufInfoMapExpr = `{_, info -> #{${
+  bufInfoFields.map((field) => `${field}: info.${field}`).join(",")
+}}}`;
+
+function safeGetBufInfo(
+  denops: Denops,
+  buf: fn.BufNameArg | fn.GetBufInfoDictArg,
+): Promise<BufInfo[]> {
+  const expr = `getbufinfo(buf)->map(${bufInfoMapExpr})`;
+  return denops.eval(expr, { buf }) as Promise<BufInfo[]>;
 }
