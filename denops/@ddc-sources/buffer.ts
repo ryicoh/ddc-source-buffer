@@ -159,11 +159,11 @@ async function getBufInfo(
   bufnr: number,
   limit: number,
 ): Promise<BufInfo | undefined> {
-  await fn.bufload(denops, bufnr);
   const bufInfos = await safeGetBufInfo(denops, bufnr);
   if (bufInfos.length !== 1) {
     return;
   }
+  await fn.bufload(denops, bufnr);
   const info = bufInfos[0];
   try {
     const stat = await Deno.stat(info.name);
