@@ -45,6 +45,7 @@ const bufInfoFields = [
 export class Source extends BaseSource<Params> {
   private buffers: Map<number, BufCache> = new Map();
   override events: DdcEvent[] = [
+    "Initialize",
     "BufWinEnter",
     "BufWritePost",
     "InsertEnter",
