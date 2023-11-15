@@ -50,9 +50,10 @@ EXAMPLES					*ddc-source-buffer-examples*
 PARAMS						*ddc-source-buffer-params*
 
 					*ddc-source-buffer-param-getBufnrs*
-getBufnrs	(number|undefined)
-	This is the function {id} for collecting the target buffer. Use
-	|denops#callback#register()| to obtain the {id}.
+getBufnrs	(string | function | undefined)
+	This is the function for collecting the target buffer.
+	Use |denops#callback#register()| to obtain the {id} or pass TypeScript
+	function directly via |ddc#custom#load_config()|.
 
 	The argument of the function is {context} and the return value is an
 	array of bufnr.
