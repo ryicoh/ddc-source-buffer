@@ -3,20 +3,20 @@ import {
   Context,
   DdcEvent,
   Item,
-} from "https://deno.land/x/ddc_vim@v3.7.2/types.ts";
+} from "https://deno.land/x/ddc_vim@v4.1.0/types.ts";
 import {
   Denops,
   fn,
   op,
   vars,
-} from "https://deno.land/x/ddc_vim@v3.7.2/deps.ts";
+} from "https://deno.land/x/ddc_vim@v4.1.0/deps.ts";
 import {
   GatherArguments,
   OnEventArguments,
-} from "https://deno.land/x/ddc_vim@v3.7.2/base/source.ts";
-import { convertKeywordPattern } from "https://deno.land/x/ddc_vim@v3.7.2/util.ts";
-import { basename } from "https://deno.land/std@0.192.0/path/mod.ts";
-import { assert, is } from "https://deno.land/x/unknownutil@v3.2.0/mod.ts";
+} from "https://deno.land/x/ddc_vim@v4.1.0/base/source.ts";
+import { convertKeywordPattern } from "https://deno.land/x/ddc_vim@v4.1.0/util.ts";
+import { basename } from "https://deno.land/std@0.206.0/path/mod.ts";
+import { assert, is } from "https://deno.land/x/unknownutil@v3.10.0/mod.ts";
 
 type BufCache = {
   bufnr: number;
@@ -27,7 +27,9 @@ type BufCache = {
 };
 
 type Params = {
-  getBufnrs?: number;
+  getBufnrs?:
+    | string // ID of denops#callback.
+    | ((context: Context) => Promise<number[]>);
   limitBytes: number;
   bufNameStyle: "none" | "full" | "basename";
 };
@@ -193,11 +195,13 @@ async function gatherWords(
 async function getBufnrs(
   denops: Denops,
   context: Context,
-  id?: number,
+  callback?: Params["getBufnrs"],
 ): Promise<number[]> {
-  if (id !== undefined) {
+  if (callback) {
     const currentBufnr = await fn.bufnr(denops);
-    const bufnrs = await denops.call("denops#callback#call", id, context);
+    const bufnrs = is.String(callback)
+      ? await denops.call("denops#callback#call", callback, context)
+      : await callback(context);
     assert(bufnrs, is.ArrayOf(is.Number));
     return bufnrs.map((bufnr) => bufnr !== 0 ? bufnr : currentBufnr);
   } else {
