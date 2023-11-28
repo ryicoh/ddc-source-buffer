@@ -166,7 +166,12 @@ async function getBufInfo(
   if (bufInfos.length !== 1) {
     return;
   }
-  await fn.bufload(denops, bufnr);
+  try {
+    await fn.bufload(denops, bufnr);
+  } catch {
+    // The buffer is already deleted.
+    return;
+  }
   const info = bufInfos[0];
   try {
     const stat = await Deno.stat(info.name);
