@@ -86,7 +86,7 @@ export class Source extends BaseSource<Params> {
     await Promise.all(bufnrs.map(async (bufnr) => {
       const changedtick = this.buffers.get(bufnr)?.changedtick;
       if (
-        changedtick === undefined ||
+        changedtick == null ||
         await vars.b.get(denops, "changedtick", 0) !== changedtick
       ) {
         await this.makeBufCache(denops, bufnr, pattern, limit);
@@ -107,7 +107,7 @@ export class Source extends BaseSource<Params> {
     sourceParams,
   }: OnEventArguments<Params>): Promise<void> {
     const currentBufnr = await fn.bufnr(denops);
-    if (context.event == "BufEnter" && this.buffers.has(currentBufnr)) {
+    if (context.event === "BufEnter" && this.buffers.has(currentBufnr)) {
       return;
     }
 
