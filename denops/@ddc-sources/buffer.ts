@@ -121,7 +121,7 @@ export class Source extends BaseSource<Params> {
     await this.checkCache(
       denops,
       bufnrs,
-      sourceOptions.keywordPattern,
+      sourceOptions.keywordPattern ?? "",
       sourceParams.limitBytes,
     );
   }
